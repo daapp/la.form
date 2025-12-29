@@ -144,8 +144,10 @@ update msg model =
 
         UpdatePhone phone ->
             let
+                -- Фильтруем только цифры при вводе
+                digitsOnly = String.filter Char.isDigit phone
                 formData = model.formData
-                newFormData = { formData | phone = phone }
+                newFormData = { formData | phone = digitsOnly }
             in
             ( { model | formData = newFormData, error = Nothing }, Cmd.none )
 
@@ -167,9 +169,8 @@ update msg model =
             let
                 data = model.formData
 
-                phoneOk =
-                    String.length (String.filter Char.isDigit data.phone) >= 10
-
+                -- Проверка российского номера телефона
+                phoneOk = isValidRussianPhone data.phone
                 nameOk = not (String.trim data.name == "")
                 cityOk = not (String.trim data.city == "")
 
@@ -258,22 +259,35 @@ parseHttpError error =
         Http.BadBody body ->
             "Ошибка в данных: " ++ body
 
+-- Проверка российского номера телефона
+isValidRussianPhone : String -> Bool
+isValidRussianPhone phone =
+    let
+        digits = String.filter Char.isDigit phone
+        length = String.length digits
+    in
+    -- Российские номера: 10 цифр (без кода страны) или 11 цифр (с кодом страны 7)
+    (length == 10 && String.startsWith "9" digits) ||
+    (length == 11 && String.startsWith "79" digits)
+
 formatPhone : String -> String
 formatPhone raw =
     let
         digits = String.filter Char.isDigit raw
+        length = String.length digits
 
-        formatDigits ds =
-            case String.length ds of
-                11 ->
-                    if String.startsWith "7" ds then
-                        "+7 " ++ String.slice 1 4 ds ++ "-" ++ String.slice 4 7 ds ++ "-" ++ String.slice 7 9 ds ++ "-" ++ String.slice 9 11 ds
-                    else
-                        "+" ++ ds
-                _ ->
-                    "+" ++ ds
+        formatRussianPhone ds =
+            if String.length ds == 10 then
+                -- Номер без кода страны: 9123456789 -> +7 912 345-67-89
+                "+7 " ++ String.slice 0 3 ds ++ " " ++ String.slice 3 6 ds ++ "-" ++ String.slice 6 8 ds ++ "-" ++ String.slice 8 10 ds
+            else if String.length ds == 11 && String.startsWith "7" ds then
+                -- Номер с кодом страны: 79123456789 -> +7 912 345-67-89
+                "+7 " ++ String.slice 1 4 ds ++ " " ++ String.slice 4 7 ds ++ "-" ++ String.slice 7 9 ds ++ "-" ++ String.slice 9 11 ds
+            else
+                -- Для других форматов просто добавляем +
+                "+" ++ ds
     in
-    formatDigits digits
+    formatRussianPhone digits
 
 formatDateTime : Posix -> String
 formatDateTime time =
@@ -418,12 +432,19 @@ formView formData loading =
                     [ type_ "tel"
                     , value formData.phone
                     , onInput UpdatePhone
-                    , placeholder "+7 123-456-78-90"
+                    , placeholder "79123456789 или 9123456789"
                     , required True
                     , disabled loading
+                    , pattern "[0-9]*" -- Разрешаем ввод только цифр
+                    , title "Введите только цифры (10 или 11 цифр)"
                     ] []
                 , span [ class "validation-error" ]
-                    [ text (if not (isValidPhone formData.phone) then "Телефон должен содержать не менее 10 цифр" else "") ]
+                    [ text
+                        (if not (isValidRussianPhone formData.phone) then
+                            "Номер должен содержать 10 цифр (начинается с 9) или 11 цифр (начинается с 79)"
+                         else
+                            "")
+                    ]
                 ]
             , div [ class "form-group" ]
                 [ label [] [ text "Город *" ]
@@ -452,7 +473,7 @@ formView formData loading =
                     [ type_ "button"
                     , onClick SaveForm
                     , class "save-btn"
-                    , disabled loading
+                    , disabled (loading || not (isValidRussianPhone formData.phone))
                     ]
                     [ text (if loading then "Сохранение..." else "Сохранить") ]
                 , button
@@ -468,17 +489,5 @@ formView formData loading =
 
 isValidPhone : String -> Bool
 isValidPhone phone =
-    let
-        digits = String.filter Char.isDigit phone
-    in
-    String.length digits >= 10
-
-main : Program () Model Msg
-main =
-    Browser.element
-        { init = init
-        , view = view
-        , update = update
-        , subscriptions = \_ -> Sub.none
-        }
+    isValidRussianPhone phone
 
